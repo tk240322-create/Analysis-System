@@ -5,6 +5,7 @@ const fs = require("fs");
 
 const app = express();
 const PORT = 3000;
+const mammoth = require("mammoth");
 
 // アップロード先
 const uploadDir = "uploads";
@@ -16,17 +17,31 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (
+      file.mimetype === "application/pdf" ||
+      file.mimetype ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error("PDF または DOCX ファイルのみアップロード可能です"));
+    }
+  }
+});
+
 
 // 画面
 app.get("/", (req, res) => {
   res.send(`
-    <h2>PDFアップロード</h2>
+    <h2>学習到達度自動分析システム</h2>
     <form method="POST" action="/upload" enctype="multipart/form-data">
-      <label>カリキュラム PDF:</label><br>
-      <input type="file" name="curriculum" accept=".pdf" /><br><br>
-      <label>日報 PDF:</label><br>
-      <input type="file" name="report" accept=".pdf" /><br><br>
+      <label>カリキュラム:</label><br>
+      <input type="file" name="curriculum" accept=".pdf,.docx" /><br><br>
+      <label>日報:</label><br>
+      <input type="file" name="report" accept=".pdf,.docx" /><br><br>
       <button type="submit">アップロードして評価</button>
     </form>
   `);
@@ -58,22 +73,57 @@ async function callLLM(prompt) {
   return text || "評価不能";
 }
 
-// --- PDFテキスト抽出関数 ---
-async function extractText(pdfjsLib, fileData) {
+// --- PDFテキスト抽出（buffer前提） ---
+const path = require("path");
+
+async function extractPdfTextFromBuffer(buffer) {
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
   const loadingTask = pdfjsLib.getDocument({
-    data: fileData,
-    cMapUrl: "node_modules/pdfjs-dist/cmaps/",
-    cMapPacked: true,
-    standardFontDataUrl: "node_modules/pdfjs-dist/standard_fonts/"
+    data: new Uint8Array(buffer),
+
+    // ★ ここが重要：必ず末尾 /
+    standardFontDataUrl:
+      path.join(__dirname, "node_modules/pdfjs-dist/standard_fonts") + "/",
+
+    cMapUrl:
+      path.join(__dirname, "node_modules/pdfjs-dist/cmaps") + "/",
+
+    cMapPacked: true
   });
+
   const pdf = await loadingTask.promise;
+
   let text = "";
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     text += content.items.map(item => item.str).join(" ") + "\n";
   }
-  return text.trim();
+
+  return text;
+}
+
+// --- ファイル種別に応じたテキスト抽出 ---
+async function extractText(file) {
+  // PDF
+  if (file.mimetype === "application/pdf") {
+    return await extractPdfTextFromBuffer(file.buffer);
+  }
+
+  // DOCX
+  if (
+    file.mimetype ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    const result = await mammoth.extractRawText({
+      buffer: file.buffer
+    });
+    return result.value;
+  }
+
+  throw new Error("未対応のファイル形式です");
 }
 
 // アップロード処理
@@ -88,21 +138,16 @@ app.post(
       console.log("### /upload CALLED ###");
       console.log(req.files);
 
-      const curriculumPath = req.files.curriculum[0].path;
-      const reportPath     = req.files.report[0].path;
+      const curriculumFile = req.files.curriculum[0];
+      const reportFile     = req.files.report[0];
 
-      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-
-      const curriculumData = new Uint8Array(fs.readFileSync(curriculumPath));
-      const reportData     = new Uint8Array(fs.readFileSync(reportPath));
-
-      const curriculumText = await extractText(pdfjsLib, curriculumData);
-      const reportText     = await extractText(pdfjsLib, reportData);
+      const curriculumText = await extractText(curriculumFile);
+      const reportText     = await extractText(reportFile);
 
       // --- Geminiプロンプト作成 ---
       const LLM_INPUT_LIMIT = 3000;
       const prompt = `
-以下は2つのPDFから抽出したテキストです（一部）。
+以下は2つのファイルから抽出したテキストです（一部）。
 
 【カリキュラム】
 ----
@@ -136,9 +181,15 @@ ${evaluation}
       `);
 
     } catch (err) {
-      console.error(err);
-      res.status(500).send("PDFの読み取りまたは評価に失敗しました");
-    }
+        console.error("### ERROR ###");
+        console.error(err);
+
+        res.status(500).send(`
+          <h3>エラーが発生しました</h3>
+          <pre>${err.message}</pre>
+          <a href="/">戻る</a>
+        `);
+      }
   }
 );
 
