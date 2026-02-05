@@ -157,24 +157,66 @@ async function uploadFiles() {
     return;
   }
 
+ // ★ ローディング表示
+  document.getElementById("loadingOverlay").style.display = "flex";
+
   const formData = new FormData();
   selectedFiles.forEach(f => formData.append("files", f));
 
-  const res = await fetch("/upload", {
-    method: "POST",
-    body: formData
-  });
+  try {
+    const res = await fetch("/upload", {
+      method: "POST",
+      body: formData
+    });
 
-  const html = await res.text();
-  document.body.innerHTML = html;
+    const html = await res.text();
+    document.body.innerHTML = html;
+   } catch (e) {
+    alert("通信エラーが発生しました");
+    console.error(e);
+  }
 }
 </script>
+
+<style>
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #ccc;
+  border-top: 4px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+</style>
+
+<div id="loadingOverlay" style="
+  display:none;
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:rgba(255,255,255,0.8);
+  z-index:9999;
+  align-items:center;
+  justify-content:center;
+">
+  <div style="text-align:center; font-size:18px;">
+    <div class="spinner"></div>
+    <p>評価中です…少々お待ちください</p>
+  </div>
+</div>
 
 </body>
 </html>
   `);
 });
-
 
 // --- Gemini API 呼び出し関数 ---
 async function callLLM(prompt) {
