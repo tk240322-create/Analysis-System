@@ -36,16 +36,106 @@ const upload = multer({
 // 画面
 app.get("/", (req, res) => {
   res.send(`
-    <h2>学習到達度自動分析システム</h2>
-    <form method="POST" action="/upload" enctype="multipart/form-data">
-      <label>カリキュラム:</label><br>
-      <input type="file" name="curriculum" accept=".pdf,.docx" /><br><br>
-      <label>日報:</label><br>
-      <input type="file" name="report" accept=".pdf,.docx" /><br><br>
-      <button type="submit">アップロードして評価</button>
-    </form>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>学習到達度自動分析システム</title>
+<style>
+  body {
+    font-family: sans-serif;
+  }
+  .drop-zone {
+    border: 2px dashed #888;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    text-align: center;
+    background: #fafafa;
+  }
+  .drop-zone.dragover {
+    background: #e0f0ff;
+    border-color: #3399ff;
+  }
+</style>
+</head>
+
+<body>
+  <h2>学習到達度自動分析システム</h2>
+
+  <form method="POST" action="/upload" enctype="multipart/form-data">
+
+    <div class="drop-zone" id="curriculumZone">
+      <strong>カリキュラム</strong><br>
+      PDF / DOCX をドラッグ＆ドロップ<br>
+      <input type="file" name="curriculum" accept=".pdf,.docx" hidden>
+      <div class="filename"></div>
+    </div>
+
+    <div class="drop-zone" id="reportZone">
+      <strong>日報</strong><br>
+      PDF / DOCX をドラッグ＆ドロップ<br>
+      <input type="file" name="report" accept=".pdf,.docx" hidden>
+      <div class="filename"></div>
+    </div>
+
+    <button type="submit">アップロードして評価</button>
+  </form>
+
+<script>
+function setupDropZone(zone) {
+  const input = zone.querySelector("input");
+  const filename = zone.querySelector(".filename");
+
+  zone.addEventListener("click", () => {
+    input.click();
+  });
+
+  zone.addEventListener("dragover", e => {
+    e.preventDefault();
+    zone.classList.add("dragover");
+  });
+
+  zone.addEventListener("dragleave", () => {
+    zone.classList.remove("dragover");
+  });
+
+  zone.addEventListener("drop", e => {
+    e.preventDefault();
+    zone.classList.remove("dragover");
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+
+    // D&D では change が出ないので手動発火
+    input.dispatchEvent(new Event("change"));
+  });
+
+  // 表示は input の状態だけを見る
+  input.addEventListener("change", () => {
+    if (input.files.length > 0) {
+      filename.textContent = "選択済み: " + input.files[0].name;
+      filename.style.color = "green";
+    } else {
+      filename.textContent = "未選択";
+      filename.style.color = "red";
+    }
+  });
+}
+
+setupDropZone(document.getElementById("curriculumZone"));
+setupDropZone(document.getElementById("reportZone"));
+</script>
+
+</body>
+</html>
   `);
 });
+
 
 // --- Gemini API 呼び出し関数 ---
 async function callLLM(prompt) {
@@ -129,6 +219,7 @@ async function extractText(file) {
 // アップロード処理
 app.post(
   "/upload",
+
   upload.fields([
     { name: "curriculum", maxCount: 1 },
     { name: "report", maxCount: 1 }
@@ -137,6 +228,14 @@ app.post(
     try {
       console.log("### /upload CALLED ###");
       console.log(req.files);
+
+      if (!req.files?.curriculum || !req.files?.report) {
+        return res.status(400).send(`
+          <h3>ファイルが不足しています</h3>
+          <p>カリキュラムと日報の両方をアップロードしてください。</p>
+          <a href="/">戻る</a>
+        `);
+      }
 
       const curriculumFile = req.files.curriculum[0];
       const reportFile     = req.files.report[0];
