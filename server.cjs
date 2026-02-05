@@ -27,11 +27,10 @@ const upload = multer({
     ) {
       cb(null, true);
     } else {
-      cb(new Error("PDF または DOCX ファイルのみアップロード可能です"));
+      cb(new Error("PDF または DOCX のみ"));
     }
   }
 });
-
 
 // 画面
 app.get("/", (req, res) => {
@@ -65,70 +64,110 @@ app.get("/", (req, res) => {
 
   <form method="POST" action="/upload" enctype="multipart/form-data">
 
-    <div class="drop-zone" id="curriculumZone">
-      <strong>カリキュラム</strong><br>
-      PDF / DOCX をドラッグ＆ドロップ<br>
-      <input type="file" name="curriculum" accept=".pdf,.docx" hidden>
-      <div class="filename"></div>
+    <div class="drop-zone" id="dropZone">
+      ここに PDF / DOCX をドラッグ（最大2つ）
+      <input type="file" name="files" multiple style="display:none"/>
+
     </div>
 
-    <div class="drop-zone" id="reportZone">
-      <strong>日報</strong><br>
-      PDF / DOCX をドラッグ＆ドロップ<br>
-      <input type="file" name="report" accept=".pdf,.docx" hidden>
-      <div class="filename"></div>
-    </div>
+    <ul id="fileSlots">
+      <li>未選択</li>
+      <li>未選択</li>
+    </ul>
 
-    <button type="submit">アップロードして評価</button>
+    <button type="button" onclick="resetAll()">リセット</button>
+
+    <button type="button" onclick="uploadFiles()">アップロード</button>
+
   </form>
 
+  <hr>
+
+  <ul id="savedList"></ul>
+
 <script>
-function setupDropZone(zone) {
-  const input = zone.querySelector("input");
-  const filename = zone.querySelector(".filename");
+const dropZone = document.getElementById("dropZone");
+const input = dropZone.querySelector("input");
+const fileSlots = document.getElementById("fileSlots");
 
-  zone.addEventListener("click", () => {
-    input.click();
-  });
+let selectedFiles = [];
+const MAX_FILES = 2;
 
-  zone.addEventListener("dragover", e => {
-    e.preventDefault();
-    zone.classList.add("dragover");
-  });
+dropZone.addEventListener("click", () => input.click());
 
-  zone.addEventListener("dragleave", () => {
-    zone.classList.remove("dragover");
-  });
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("dragover");
+});
 
-  zone.addEventListener("drop", e => {
-    e.preventDefault();
-    zone.classList.remove("dragover");
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("dragover");
+});
 
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("dragover");
 
-    const dt = new DataTransfer();
-    dt.items.add(file);
-    input.files = dt.files;
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
 
-    // D&D では change が出ないので手動発火
-    input.dispatchEvent(new Event("change"));
-  });
+  if (selectedFiles.length >= MAX_FILES) {
+    alert("ファイルは2つまでです");
+    return;
+  }
 
-  // 表示は input の状態だけを見る
-  input.addEventListener("change", () => {
-    if (input.files.length > 0) {
-      filename.textContent = "選択済み: " + input.files[0].name;
-      filename.style.color = "green";
-    } else {
-      filename.textContent = "未選択";
-      filename.style.color = "red";
-    }
-  });
+  selectedFiles.push(file);
+  renderFileSlots();
+});
+
+input.addEventListener("change", () => {
+  const file = input.files[0];
+  if (!file) return;
+
+  if (selectedFiles.length >= MAX_FILES) {
+    alert("ファイルは2つまでです");
+    input.value = "";
+    return;
+  }
+
+  selectedFiles.push(file);
+  renderFileSlots();
+  input.value = "";
+});
+
+function renderFileSlots() {
+  fileSlots.innerHTML = "";
+  for (let i = 0; i < 2; i++) {
+    const li = document.createElement("li");
+    li.textContent = selectedFiles[i]
+      ? selectedFiles[i].name
+      : "未選択";
+    fileSlots.appendChild(li);
+  }
 }
 
-setupDropZone(document.getElementById("curriculumZone"));
-setupDropZone(document.getElementById("reportZone"));
+function resetAll() {
+  selectedFiles = [];
+  renderFileSlots();
+}
+
+async function uploadFiles() {
+  if (selectedFiles.length !== 2) {
+    alert("ファイルを2つ選んでください");
+    return;
+  }
+
+  const formData = new FormData();
+  selectedFiles.forEach(f => formData.append("files", f));
+
+  const res = await fetch("/upload", {
+    method: "POST",
+    body: formData
+  });
+
+  const html = await res.text();
+  document.body.innerHTML = html;
+}
 </script>
 
 </body>
@@ -219,43 +258,37 @@ async function extractText(file) {
 // アップロード処理
 app.post(
   "/upload",
-
-  upload.fields([
-    { name: "curriculum", maxCount: 1 },
-    { name: "report", maxCount: 1 }
-  ]),
+  upload.array("files", 2), // ★ ここが超重要
   async (req, res) => {
     try {
       console.log("### /upload CALLED ###");
       console.log(req.files);
 
-      if (!req.files?.curriculum || !req.files?.report) {
+      if (!req.files || req.files.length !== 2) {
         return res.status(400).send(`
           <h3>ファイルが不足しています</h3>
-          <p>カリキュラムと日報の両方をアップロードしてください。</p>
+          <p>PDF / DOCX を2つアップロードしてください。</p>
           <a href="/">戻る</a>
         `);
       }
 
-      const curriculumFile = req.files.curriculum[0];
-      const reportFile     = req.files.report[0];
+      const file1 = req.files[0];
+      const file2 = req.files[1];
 
-      const curriculumText = await extractText(curriculumFile);
-      const reportText     = await extractText(reportFile);
+      const text1 = await extractText(file1);
+      const text2 = await extractText(file2);
 
-      // --- Geminiプロンプト作成 ---
-      const LLM_INPUT_LIMIT = 3000;
       const prompt = `
-以下は2つのファイルから抽出したテキストです（一部）。
+以下は2つのファイルです。
 
-【カリキュラム】
+【ファイル1】
 ----
-${curriculumText.slice(0, LLM_INPUT_LIMIT)}
+${text1.slice(0, 3000)}
 ----
 
-【日報】
+【ファイル2】
 ----
-${reportText.slice(0, LLM_INPUT_LIMIT)}
+${text2.slice(0, 3000)}
 ----
 
 質問：
@@ -263,32 +296,21 @@ ${reportText.slice(0, LLM_INPUT_LIMIT)}
 2. 学習・理解の度合いはどうですか？
 3. 改善点や注意点があれば挙げてください。
 
-上記を文章で詳細かつ簡潔に答えてください。
+これらを比較・評価してください。
 `;
 
-      // --- Gemini呼び出し ---
       const evaluation = await callLLM(prompt);
 
-      // --- HTML表示 ---
       res.send(`
-        <h2>PDF 比較評価結果</h2>
-        <div style="background:#f4f4f4; padding:15px; border-radius:8px; white-space:pre-wrap;">
-${evaluation}
-        </div>
-        <br>
-        <a href="/">← 戻る</a>
+        <h2>評価結果</h2>
+        <pre>${evaluation}</pre>
+        <a href="/">戻る</a>
       `);
 
     } catch (err) {
-        console.error("### ERROR ###");
-        console.error(err);
-
-        res.status(500).send(`
-          <h3>エラーが発生しました</h3>
-          <pre>${err.message}</pre>
-          <a href="/">戻る</a>
-        `);
-      }
+      console.error(err);
+      res.status(500).send(err.message);
+    }
   }
 );
 
