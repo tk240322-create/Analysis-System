@@ -6,6 +6,8 @@ const fs = require("fs");
 const app = express();
 const PORT = 3000;
 const mammoth = require("mammoth");
+// ★ サーバ全体で共有されるキャッシュ
+const evaluationCache = new Map();
 
 // アップロード先
 const uploadDir = "uploads";
@@ -222,7 +224,7 @@ async function uploadFiles() {
 async function callLLM(prompt) {
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent" +
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent" +
     `?key=${GEMINI_API_KEY}`;
 
   const response = await fetch(url, {
@@ -234,9 +236,9 @@ async function callLLM(prompt) {
     })
   });
 
-  if (!response.ok) {
+  if (response.status === 429) {
     const errText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} ${errText}`);
+    throw new Error("現在Geminiが混雑しています。30秒ほど待ってから再実行してください。");
   }
 
   const data = await response.json();
@@ -330,7 +332,7 @@ ${text1.slice(0, 3000)}
 
 【ファイル2】
 ----
-${text2.slice(0, 3000)}
+${text2.slice(0, 6000)}
 ----
 
 以下の内容を、
@@ -343,17 +345,42 @@ ${text2.slice(0, 3000)}
 ・箇条書きを適切に使用
 ・A4 1〜2枚を想定
 ・最後に総合評価を必ず記載
+・最後に署名欄は不要です。
+
+【前提】
+本報告書は、第1週〜第3週の学習内容をまとめたものである。
+以下の観点で評価せよ。
+
+・各週の学習内容が大きく逸脱していないか
+・週を通じた理解の深化や一貫性が見られるか
+・単週評価ではなく、全体としての成長を重視すること
+※文章は途中で省略されている可能性がある。全体構成と要点を重視して評価せよ。
 
 【構成】
 1. 評価概要
-2. カリキュラムとの対応
-3. 学習理解度の評価
-4. 良い点
-5. 改善点・指導上の注意
-6. 総合評価
+2. 学習理解度の評価
+3. 良い点
+4. 改善点・指導上の注意
+5. 総合評価
+
+【補足】
+以下は評価上の減点対象とはしない前提条件である。
+・１週目予定されていた「業務フロー」に関する内容は会社側の事情により実施されていない。
+・GitHubの利用は、開発効率向上を目的として会社の指示により途中から導入された。
 `;
 
-      const evaluation = await callLLM(prompt);
+      console.log("PROMPT LENGTH:", prompt.length);
+
+      let evaluation;
+
+      if (evaluationCache.has(prompt)) {
+        console.log("🔥 cache hit");
+        evaluation = evaluationCache.get(prompt);
+      } else {
+        console.log("🧠 Gemini call");
+        evaluation = await callLLM(prompt);
+        evaluationCache.set(prompt, evaluation);
+      }
 
     res.send(`
     <!DOCTYPE html>
@@ -395,9 +422,13 @@ ${text2.slice(0, 3000)}
     `);
 
   } catch (err) {
-    console.error(err);
-    res.status(500).send("エラーが発生しました");
-  }
+      console.error("UPLOAD ERROR:", err);
+      res.status(500).send(`
+        <h3>エラーが発生しました</h3>
+        <pre>${err.message}</pre>
+        <a href="/">戻る</a>
+      `);
+    }
 });
 
 // サーバ起動
