@@ -402,6 +402,15 @@ ${text2.slice(0, 6000)}
         margin-bottom: 20px;
         font-size: 14px;
       }
+
+      .actions {
+        margin-top: 30px;
+        text-align: center;
+      }
+      button {
+       padding: 10px 20px;
+        font-size: 16px;
+      }
     </style>
     </head>
     <body>
@@ -415,6 +424,12 @@ ${text2.slice(0, 6000)}
 
     <div class="content">
       ${evaluation.replace(/\n/g, "<br>")}
+    </div>
+
+    <div class="actions">
+      <form action="/" method="get">
+        <button type="submit">ファイル選択画面に戻る</button>
+      </form>
     </div>
 
     </body>
